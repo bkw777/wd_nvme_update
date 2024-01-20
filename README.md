@@ -1,4 +1,4 @@
-This is a fork to remove unnecessary dependencies and do other cleanups.
+This is a fork to remove unnecessary dependencies and do other cleanups.  
 None of these are started yet. (fresh fork not yet touched)
 - original claims to need mawk but really only uses any kind of awk
 - but actually, does not need any awk at all, it's only using awk for a trivial thing doable right in bash
