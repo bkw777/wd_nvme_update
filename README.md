@@ -11,7 +11,7 @@ This is a fork to remove unnecessary dependencies and do other cleanups.
 - config bits gathered at the top
 - download files to tmp, use trap delete on exit
 
-# WD SSD Firmware Updater for Ubuntu/Linux Mint
+# WD SSD Firmware Updater for Debian-based Linux
 
 This script updates Western Digital (WD) SSD firmware on debian-based systems.  
 (Actually the only debianic part is automatically calling `apt install`  
