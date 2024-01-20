@@ -1,3 +1,11 @@
+This is a fork to remove unnecessary dependencies and do other cleanups.
+None of these are started yet. (fresh fork not yet touched)
+- original claims to need mawk but really only uses any kind of awk
+- but actually, does not need any awk at all, it's only using awk for a trivial thing doable right in bash
+- use `read` to read a file (buit-in, no child proc `$(...)`, no external `xargs`)
+- use `select` to choose an item from a list (built-in, no asking the user to type in a string)
+- replace several unnecessary `foo=$(echo foo |grep ... |bla ...)`
+
 # WD SSD Firmware Updater for Ubuntu/Linux Mint
 
 This script updates Western Digital (WD) SSD firmware on Ubuntu and Linux Mint systems. 
