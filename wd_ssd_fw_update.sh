@@ -1,4 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
+[ -n "${BASH_VERSION}" ] || exec bash $0
+set +o posix
 
 # This script downloads and updates the firmware of Western Digital SSDs on Ubuntu / Linux Mint.
 # It is only capable of updating, if, and only if the current firmware version is
@@ -24,102 +26,160 @@
 # | ✓ Patent use     | State changes                |             |
 # | ✓ Private use    |                              |             |
 
-# Location of the nvme drive.
-nvme_location="/dev/nvme0"
+########################################################################
+# configuration
 
-# Step 0: Check the requirements
-if ! required_nvme="$(type -p "nvme")" || [[ -z $required_nvme ]]; then
-  echo "The required package 'nvme-cli' is not installed."
-  echo "Please install it using 'sudo apt install nvme-cli'."
-  exit 1
-fi
+drive_class="nvme" # "nvme" for nvme0
+drive_num="0"      # "0" for nvme0
 
-if ! required_curl="$(type -p "curl")" || [[ -z $required_curl ]]; then
-  echo "The required package 'curl' is not installed."
-  echo "Please install it using 'sudo apt install curl'."
-  exit 1
-fi
+wd_firmware_host="wddashboarddownloads.wdc.com"
+devices_xml_path="/wdDashboard/config/devices/lista_devices.xml"
 
-if ! required_awk="$(type -p "awk")" || [[ -z $required_awk ]]; then
-  echo "The required package 'mawk' is not installed."
-  echo "Please install it using 'sudo apt install mawk'."
-  exit 1
-fi
+priv_exec="sudo" # "sudo", "pkexec", lxsudo, doas, etc
 
-# Step 1: Get model number and firmware version
-model=$(< /sys/class/nvme/nvme0/model xargs)
-firmware_rev=$(< /sys/class/nvme/nvme0/firmware_rev xargs)
+http_client="wget -qO" # "wget -qO" , "curl -so" , "aria2c -q -o"
 
-echo "Model: $model"
-echo "Firmware Revision: $firmware_rev"
+tmp_dir="${XDG_RUNTIME_DIR:-/tmp}"
+
+########################################################################
+
+name="${drive_class}${drive_num}"
+sys="/sys/class/$drive_class/$name"
+dev="/dev/$name"
+ifs=$IFS
+sid="${0//\//_}"
+
+echo "$0 - WD nvme drive firmware updater"
 echo
-# Replace whitespace in model with underscore
-model_under=${model// /_}
+echo "Updating firmware for $dev"
+echo
 
+mkdir -p $tmp_dir
+cd $tmp_dir || {
+	echo "Could not cd $tmp_dir !"
+	exit 1
+}
 
-# Step 2: Fetch the device list and find the firmware URL
-device_list_url="https://wddashboarddownloads.wdc.com/wdDashboard/config/devices/lista_devices.xml"
-device_properties_relative_url=$(curl -s "$device_list_url" | grep "$model_under" | grep -oP "(?<=<url>).*?(?=</url>)") #
+# all temp files
+typeset -A tf=()
+trap 'rm -f ${tf[@]}' 0
 
-NL=$'\n'  # newline character
+# required external utils
+#echo "checking dependencies"
+hc=${http_client%% *}
+typeset -A hp=(
+	[curl]=curl
+	[wget]=wget
+	[aria2c]=aria2
+)
+typeset -A pkg=(
+	[${hc}]=${hp[${hc}]}
+	[nvme]=nvme-cli
+	[xmllint]=libxml2
+)
+type -p ${!pkg[*]} 2>&1 >/dev/null || {
+	echo "Installing dependencies: ${pkg[*]}"
+	$priv_exec apt install ${pkg[*]}
+	echo
+}
+type -p ${!pkg[*]} 2>&1 >/dev/null || exit 1
 
-if [ -z "$device_properties_relative_url" ]; then
-    echo "No matching firmware URL found for model $model."
+# drive model number and firmware version
+read drive_model < $sys/model
+read firmware_rev < $sys/firmware_rev
+echo "Model: $drive_model"
+echo "Firmware: $firmware_rev"
+echo
+
+# device list and firmware URL
+tf[all]="${sid}_all.xml"
+rm -f "${tf[all]}"
+$http_client "${tf[all]}" "https://${wd_firmware_host}${devices_xml_path}"
+
+# using xmlstarlet or xmllint or any real xml parser would be more robust
+#xmllint --xpath 'lista_devices/lista_device/url' $tmp_devices_xml
+
+m="${drive_model// /_}"
+typeset -A p=()
+while read x ;do
+	[[ $x =~ ^[[:space:]]*\<url\>.*/device_properties\.xml\</url\>[[:space:]]*$ ]] || continue
+	[[ $x =~ /$m/ ]] || continue
+	x="${x#*>}"
+	x="${x%<*}"
+	IFS=/ w=($x) IFS="$ifs"
+	p+=([${w[3]}]="$x")
+done < "${tf[all]}"
+
+((${#p[@]})) || {
+    echo "No matching firmware URL found for model $drive_model."
     exit 1
-elif [[ "$device_properties_relative_url" == *"$NL"* ]]; then
-    # check if latest version of the multiple firmware versions is already installed
-    latest=$(echo "$device_properties_relative_url" | tail -n1 | awk -F'/' '{print $4}')
-    if [[ "$firmware_rev" == "$latest" ]]; then
-        echo "Already on latest firmware."
+}
+
+l=("" ${!p[@]})
+i=${#p[@]}
+v=${l[$i]}
+u=${p[$v]}
+[[ "$firmware_rev" == "$v" ]] && {
+	echo "Already on latest firmware."
 	exit 0
-    fi
-    if [ -z "$1" ]; then
-    echo "Multiple firmware versions available from WD. Please select which firmware you want to upgrade to."
-    echo "Possible values:"
-    echo "$device_properties_relative_url" | awk -F'/' '{print $4}'
-    echo "Usage $0 version-string"
-    exit 1
-    else
-        echo "Using version $1"
-    fi
-    device_properties_relative_url=$(echo "$device_properties_relative_url" | grep "$1")
-fi
+}
 
-# Do another check if there is only one firmware version to see if we have latest already installed
-latest=$(echo "$device_properties_relative_url" | awk -F'/' '{print $4}')
-if [[ "$firmware_rev" == "$latest" ]]; then
-    echo "already on latest"
-    exit 0
-fi
+echo "Found the following firmware versions available for your drive:"
+echo ${!p[@]}
+echo
+((i>1)) && {
+	x="$PS3" PS3="Select version to install: "
+	select v in ${!p[@]} ;do
+		u= ;[[ "$v" ]] && u="${p[$v]}" && [[ "$u" ]] && break
+	done
+	PS3="$x"
+}
 
-full_device_properties_url="https://wddashboarddownloads.wdc.com/$device_properties_relative_url"
+# download the device properties XML and parse it
+dxu="https://$wd_firmware_host/$u"
+tf[one]="${sid}_one.xml"
+rm -f "${tf[one]}"
+$http_client "${tf[one]}" "$dxu"
 
-# Step 3: Download the device properties XML and parse it
-device_properties_xml=$(curl -s "$full_device_properties_url")
-fwfile=$(echo "$device_properties_xml" | grep -oP "(?<=<fwfile>).*?(?=</fwfile>)")
-dependencies=$(echo "$device_properties_xml" | grep -oP "(?<=<dependency model=\"$model\">).*?(?=</dependency>)")
+fwf= deps=()
+while read x ;do
+	[[ $x =~ ^[[:space:]]*\<fwfile\>.*\</fwfile\>[[:space:]]*$ ]] && { x="${x#*>}" ;fwf="${x%<*}" ;continue ; }
+	[[ $x =~ ^[[:space:]]*\<dependency.*\>.*\</dependency\>[[:space:]]*$ ]] && { x="${x#*>}" ;deps+=("${x%<*}") ; }
+done < "${tf[one]}"
 
-echo "Firmware File: $fwfile"
+echo
+echo "Firmware File: ${fwf}"
 echo "Dependencies:"
-echo "$dependencies"
+echo "${deps[@]}"
 echo
 
-# Check if current firmware is in dependencies
-if [[ ! "$dependencies" =~ $firmware_rev ]]; then
-    echo "Current firmware version is not in the dependencies. Please upgrade to one of these versions first: $dependencies"
+# check if current firmware is new enough to install the new one
+[[ "${deps[@]}" =~ $firmware_rev ]] || {
+    echo "Please up/downgrade to one of the dependency versions above first."
     exit 1
-fi
+}
 
-# Step 4: Download the firmware file
-firmware_url=${full_device_properties_url/device_properties.xml/$fwfile}
-echo "Downloading firmware from $firmware_url..."
-curl -O "$firmware_url"
+# download the firmware file
+fwu="${dxu%/*}/${fwf}"
+tf[fwf]="${sid}_${fwf}"
+echo "Downloading $fwu ..."
+rm -f "${tf[fwf]}"
+$http_client "${tf[fwf]}" "${fwu}" || { echo "failed download" ;exit 1 ; }
+
+# TODO verify download somehow
+
+# load the firmware onto the drive
+echo
+a=n ;read -p"Load $fwf onto $dev (y/N)? " a
+[[ $a == "y" ]] || { echo "Aborted" ;exit 1 ; }
+$priv_exec nvme fw-download -f "${tf[fwf]}" $dev || exit 1
+
+# activate the new firmware
+echo
+a=n ;read -p"Activate the new firmware (y/N)? " a
+[[ $a == "y" ]] || { echo "Aborted" ;exit 1 ; }
+$priv_exec nvme fw-commit -s 2 -a 3 $dev
 
 echo
-
-# Step 5: Update the firmware
-nvme fw-download -f "$fwfile" $nvme_location
-echo "Firmware download complete. Switching to new firmware..."
-nvme fw-commit -s 2 -a 3 $nvme_location
-
 echo "Firmware update process completed. Please reboot."
+echo
