@@ -46,8 +46,8 @@ tmp_dir="${XDG_RUNTIME_DIR:-/tmp}"
 name="${drive_class}${drive_num}"
 sys="/sys/class/$drive_class/$name"
 dev="/dev/$name"
-ifs=$IFS
-sid="${0//\//_}"
+ifs="$IFS"
+sn="${0//\//_}"
 
 echo "$0 - WD nvme drive firmware updater"
 echo
@@ -60,22 +60,23 @@ cd $tmp_dir || {
 	exit 1
 }
 
-# all temp files
-typeset -A tf=()
-trap 'rm -f ${tf[@]}' 0
+# give all temp files names like tf[foo]=/path/to/foo
+# delete ${tf[*]} on exit
+unset tf ;typeset -A tf=()
+trap 'rm -f "${tf[@]}"' 0
 
 # required external utils
 #echo "checking dependencies"
-hc=${http_client%% *}
-typeset -A hp=(
+x=${http_client%% *}
+typeset -A a=(
 	[curl]=curl
 	[wget]=wget
 	[aria2c]=aria2
 )
 typeset -A pkg=(
-	[${hc}]=${hp[${hc}]}
+	[$x]=${a[$x]}
 	[nvme]=nvme-cli
-	[xmllint]=libxml2
+#	[xmllint]=libxml2
 )
 type -p ${!pkg[*]} 2>&1 >/dev/null || {
 	echo "Installing dependencies: ${pkg[*]}"
@@ -92,12 +93,13 @@ echo "Firmware: $firmware_rev"
 echo
 
 # device list and firmware URL
-tf[all]="${sid}_all.xml"
+tf[all]="${sn}_all.xml"
 rm -f "${tf[all]}"
 $http_client "${tf[all]}" "https://${wd_firmware_host}${devices_xml_path}"
 
 # using xmlstarlet or xmllint or any real xml parser would be more robust
 #xmllint --xpath 'lista_devices/lista_device/url' $tmp_devices_xml
+# gives a proper list of url elements regardless of file formatting.
 
 m="${drive_model// /_}"
 typeset -A p=()
@@ -137,7 +139,7 @@ echo
 
 # download the device properties XML and parse it
 dxu="https://$wd_firmware_host/$u"
-tf[one]="${sid}_one.xml"
+tf[one]="${sn}_one.xml"
 rm -f "${tf[one]}"
 $http_client "${tf[one]}" "$dxu"
 
@@ -161,7 +163,7 @@ echo
 
 # download the firmware file
 fwu="${dxu%/*}/${fwf}"
-tf[fwf]="${sid}_${fwf}"
+tf[fwf]="${sn}_${fwf}"
 echo "Downloading $fwu ..."
 rm -f "${tf[fwf]}"
 $http_client "${tf[fwf]}" "${fwu}" || { echo "failed download" ;exit 1 ; }
