@@ -78,6 +78,7 @@ typeset -A pkg=(
 	[nvme]=nvme-cli
 #	[xmllint]=libxml2
 )
+unset a
 type -p ${!pkg[*]} 2>&1 >/dev/null || {
 	echo "Installing dependencies: ${pkg[*]}"
 	$priv_exec apt install ${pkg[*]}
@@ -172,14 +173,14 @@ $http_client "${tf[fwf]}" "${fwu}" || { echo "failed download" ;exit 1 ; }
 
 # load the firmware onto the drive
 echo
-a=n ;read -p"Load $fwf onto $dev (y/N)? " a
-[[ $a == "y" ]] || { echo "Aborted" ;exit 1 ; }
+x=n ;read -p"Load $fwf onto $dev (y/N)? " x
+[[ $x == "y" ]] || { echo "Aborted" ;exit 1 ; }
 $priv_exec nvme fw-download -f "${tf[fwf]}" $dev || exit 1
 
 # activate the new firmware
 echo
-a=n ;read -p"Activate the new firmware (y/N)? " a
-[[ $a == "y" ]] || { echo "Aborted" ;exit 1 ; }
+x=n ;read -p"Activate the new firmware (y/N)? " x
+[[ $x == "y" ]] || { echo "Aborted" ;exit 1 ; }
 $priv_exec nvme fw-commit -s 2 -a 3 $dev
 
 echo
