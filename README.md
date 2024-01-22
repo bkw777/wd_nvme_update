@@ -60,8 +60,8 @@ $
 ## Requirements
 
 - `bash`
-- `wget` or `curl` or `aria2c` or other
-- `sudo` or `pkexec` or other
+- `wget` or `curl` or `aria2c` or other (configurable)
+- `sudo` or `pkexec` or other (configurable)
 - `nvme-cli`
 
 ## Contributors
