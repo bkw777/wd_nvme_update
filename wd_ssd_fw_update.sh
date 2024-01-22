@@ -77,13 +77,12 @@ type -p ${!pkg[*]} 2>&1 >/dev/null || {
 }
 type -p ${!pkg[*]} 2>&1 >/dev/null || abrt "Missing one or more: ${!pkg[*]}"
 
-
 # fake detected drive for debugging
 # 611100WD 611110WD 613000WD -> 613200WD
 # 614300WD 614600WD 614900WD 615100WD 615300WD -> 615400WD
 #drive_model="WDS200T1X0E-00AFY0"
+#firmware_rev="611110WD"
 #firmware_rev="614900WD"
-
 
 echo "Device:   ${dev}"
 echo "Model:    ${drive_model}"
@@ -109,7 +108,6 @@ while read x ;do
 	[[ "${a[2]}" == "$m" ]] || continue
 	[[ ${a[3]} > ${firmware_rev} ]] && p+=([${a[3]}]="$x") || echo "Available ${a[3]} is not newer."
 done < "${all_xml}"
-echo
 
 # find the highest available version
 v= ;for x in "${!p[@]}" ;do [[ $x > $v ]] && v="$x" ;done
@@ -138,11 +136,11 @@ done < "${one_xml}"
 
 # check if running firmware is new enough to install the ne firmware
 [[ "${deps[@]}" =~ ${firmware_rev} ]] || abrt "\
-Upgrading to $v requires the drive to be
-currently running one of the following:
-${deps[@]}
+  In order to install firmware version $v
+  the drive must currently be running one of the following:
+  ${deps[@]}
 
-${dev} is currently running ${firmware_rev}
+  ${dev} is currently running ${firmware_rev}
 "
 
 # download the firmware file
@@ -158,9 +156,9 @@ $DEBUG && echo
 # load the firmware onto the drive
 ask "Load ${fwf} onto ${dev} (y/N)? " || abrt "Aborted"
 ${priv_exec} nvme fw-download -f "${fwf}" "${dev}" || abrt "failed"
+echo
 
 # activate the new firmware
-echo
 ask "Activate the new firmware (y/N)? " || abrt "Aborted"
 ${priv_exec} nvme fw-commit -s 2 -a 3 "${dev}" || abrt "failed"
 
