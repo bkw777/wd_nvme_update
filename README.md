@@ -81,9 +81,13 @@ This was forked from https://github.com/not-a-feature/wd_ssd_firmware_update to 
 - replace many unnecessary `foo=$(echo foo |grep ... |bla ...)`
 - no longer uses grep or awk or tail or xargs or any external utils that bash can do itself
 - don't run the whole script as root, the script calls sudo (or other) itself just where needed
-- configurable list of http clients (wget, curl, aria2c, etc) scanned and selected automatically
-- configurable list of sudo-likes (sudo, pkexec, exit) scanned and selected automatically
-- configurable list of package managers (apt, dnf, zypper, pacman, etc) scanned and selected automatically
+- configurable list of http clients (wget, curl, aria2c, etc) scanned and selected automatically  
+  If `wget` is not installed, will automatically try `curl`, `aria2c`, and anything else listed in http_clients\[\]  
+  and failing any of those, will offer to automatically install `wget` or whatever is first in http_clients\[\]
+- configurable list of sudo-likes (sudo, pkexec, exit) scanned and selected automatically  
+  If `sudo` is not installed, will automatically try `pkexec` and anything else listed in su_apps\[\]
+- configurable list of package managers (apt, dnf, zypper, pacman, etc) scanned and selected automatically  
+  If `apt` is not installed, will automatically try `dnf`, `zypper`, `pacman`, `yum`, `apt-get`, and anything else listed in package_managers\[\]
 - config bits gathered at the top
 - download files to tmp, use trap to delete on exit
 - optionally specify /dev/nvme# on command line instead of default /dev/nvme0
