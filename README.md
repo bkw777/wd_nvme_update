@@ -1,44 +1,23 @@
-This is a fork to remove unnecessary dependencies and do other cleanups.  
-- use `read` to read a file (buit-in, no child proc `$(...)`, no external `xargs`)
-- use `select` to choose an item from a list (built-in, no need to make user re-run etc)
-- replace many unnecessary `foo=$(echo foo |grep ... |bla ...)`
-- no longer uses grep or awk or tail or xargs or any external utils that bash can do itself
-- don't run the whole script as root, script calls sudo (or other) itself just where needed
-- configurable http client (wget, curl, aria2c, others...)
-- configurable sudo-alike (sudo, pkexec, lxsudo, others...)
-- config bits gathered at the top
-- download files to tmp, use trap to delete on exit
-- specify /dev/nvme0 on command line
-- lots of sanity/safety checks
-- error / usage messages
-- debug mode (DEBUG=true) that prints more messages and doesn't delete the temp files on exit
+# WD NVME Firmware Updater
 
-# WD SSD Firmware Updater for Debian-based Linux
+Updates the firmware of a Western Digital nvme ssd on Linux.
 
-This script updates Western Digital (WD) SSD firmware on debian-based systems.  
-(Actually the only debianic part is automatically calling `apt install`  
-if nvme-cli isn't installed. Other than that it's the same for any linux.)
+[Initially developed for frame.work laptops](https://community.frame.work/t/western-digital-drive-update-guide-without-windows-wd-dashboard/20616), but can be used for other devices as well.
 
-It was initially developed for frame.work 13 laptops, but can be used for other devices as well.
-
-See the discussion on: https://community.frame.work/t/western-digital-drive-update-guide-without-windows-wd-dashboard/20616
-
-**Important Notes:**
-- Firmware updates can be risky. Always back up your data and understand the risks before proceeding.
-- Use at your own risk.
+**Firmware updates are always risky. Use at your own risk.**
 
 ## Usage
 
-`$ wd_ssd_fw_update.sh /dev/nvme0`
-
-or verbose mode:
-
-`$ DEBUG=true wd_ssd_fw_update.sh /dev/nvme0`
+`$ ./wd_nvme_update.sh`  
+or  
+`$ ./wd_nvme_update.sh /dev/nvme1`  
+or  
+`$ DEBUG=true ./wd_nvme_update.sh`
 
 
 ```
-$ ./wd_ssd_fw_update.sh /dev/nvme0
-./wd_ssd_fw_update.sh - WD nvme drive firmware updater
+$ ./wd_nvme_update.sh
+./wd_nvme_update.sh - WD nvme drive firmware updater
 Device:   /dev/nvme0
 Model:    WDS200T1X0E-00AFY0
 Firmware: 614900WD
@@ -65,8 +44,8 @@ $
 
 
 ```
-$ ./wd_ssd_fw_update.sh /dev/nvme0
-./wd_ssd_fw_update.sh - WD nvme drive firmware updater
+$ ./wd_nvme_update.sh
+./wd_nvme_update.sh - WD nvme drive firmware updater
 Device:   /dev/nvme0
 Model:    WDS200T1X0E-00AFY0
 Firmware: 615400WD
@@ -94,3 +73,21 @@ $
 | Edward Felder      |                 | Initial idea    |
 | Oleksandr Lutai    |                 | Initial idea    |
 | Brian K. White     | @bkw777         | rewrite         |
+
+## Fork
+This was forked from https://github.com/not-a-feature/wd_ssd_firmware_update to remove unnecessary dependencies and do other cleanups.  
+- use built-in `read` to read a file directly instead of a child shell and external executable
+- use built-in `select` to choose an item from a list
+- replace many unnecessary `foo=$(echo foo |grep ... |bla ...)`
+- no longer uses grep or awk or tail or xargs or any external utils that bash can do itself
+- don't run the whole script as root, the script calls sudo (or other) itself just where needed
+- configurable list of http clients (wget, curl, aria2c, etc) scanned and selected automatically
+- configurable list of sudo-likes (sudo, pkexec, exit) scanned and selected automatically
+- configurable list of package managers (apt, dnf, zypper, pacman, etc) scanned and selected automatically
+- config bits gathered at the top
+- download files to tmp, use trap to delete on exit
+- optionally specify /dev/nvme# on command line instead of default /dev/nvme0
+- more sanity/safety checks
+- error / usage messages
+- debug mode that prints more messages and doesn't delete the temp files on exit
+- removed ubuntu/mint/apt assumptions, should work on any distribution

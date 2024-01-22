@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-[ -n "${BASH_VERSION}" ] || exec bash $0
+[ -n "${BASH_VERSION}" ] || exec bash "$0" "$@"
 set +o posix
 
 # Downloads and updates the firmware of Western Digital NVME SSDs
 #
 # Firmware updates are always risky. Use at your own risk
 #
-# 2023 Brian K. White
+# 2023 Brian K. White @bkw777
 # original: Copyright (C) 2023 by Jules Kreuer - @not_a_feature
-# With adaptations from @Klaas-
-# License: GPL3
+#           2023 @Klaas-
+# license: GPL3
 
 ########################################################################
 # configuration
+
+default_device=/dev/nvme0
 
 device_class="nvme"
 
@@ -20,26 +22,31 @@ wd_firmware_host="wddashboarddownloads.wdc.com"
 
 devices_xml_path="/wdDashboard/config/devices/lista_devices.xml"
 
-priv_exec="sudo" # "sudo", "pkexec", lxsudo, doas, etc
-
-http_client="wget -qO" # "wget -qO" , "curl -so" , "aria2c -q -o"
-
 tmp_dir="${XDG_RUNTIME_DIR:-/tmp}"
 
 : ${DEBUG:=false}
 
+su_apps=(sudo pkexec doas) # lxsudo gksudo ...
+
+http_clients=("wget -qO" "curl -so" "aria2c -q -o")
+
+package_managers=("apt install" "dnf install" "zypper install" "pacman -S" "yum install" "apt-get install")
+
 ########################################################################
 
-echo "$0 - WD nvme drive firmware updater"
+echo "$0 - WD nvme firmware updater"
 
 abrt () { echo -e "$@" >&2 ;exit 1 ; }
 ask () { local x=n ;read -p"$@" x ;[[ $x == "y" ]] ; }
-usage () { abrt "\n  usage  : $0 <device>\n  example: $0 /dev/nvme0\n\n${@}\n" ; }
+usage () { abrt "\n  usage  : $0 [device]\n  example: $0 ${default_device}\n\n  [device] defaults to ${default_device} if not given\n\n${@}\n" ; }
 ifs="${IFS}"
 
+case "$1" in h|help|-h|--help|-\?) usage ;; esac
+
 # drive device node, model number, and firmware version
-dev="$1"
+dev="${1:-${default_device}}"
 [[ -c "${dev}" ]] || usage "\"${dev}\" does not exist or is not a character device"
+$DEBUG && [[ -z "$1" ]] && echo "debug: nvme device not specified, using default \"${dev}\""
 name=${dev##*/}
 sys="/sys/class/${device_class}/${name}"
 [[ -d "${sys}" ]] || usage "${sys} does not exist"
@@ -57,25 +64,37 @@ ${DEBUG} && {
 	trap 'rm -rf "${td}"' 0
 }
 
-# required external utils
-x=${http_client%% *}
-typeset -A a=(
-	[curl]=curl
-	[wget]=wget
-	[aria2c]=aria2
-)
+# find sudo or pkexec
+su= ;for x in "${su_apps[@]}" ;do
+	command -v $x >/dev/null 2>&1 && su=$x && break
+done
+[[ "${su}" ]] || abrt "Could not find sudo or pkexec!"
+$DEBUG && echo "debug: using \"${su}\" for root tasks"
+
+# define required external utils - needlessly fancy ;)
+# [command]=package_name
 typeset -A pkg=(
-	[$x]=${a[$x]}
 	[nvme]=nvme-cli
 #	[xmllint]=libxml2
 )
-unset a
-type -p ${!pkg[*]} 2>&1 >/dev/null || {
+# find wget or curl or aria2c
+hc= ;for x in "${http_clients[@]}" ;do
+	command -v ${x%% *} >/dev/null 2>&1 && hc="$x" && break
+done
+# if none found, add the first one to be installed
+[[ "${hc}" ]] || { hc="${http_clients[0]}" ;x=${hc%% *} ;pkg[$x]=$x ; }
+$DEBUG && echo "debug: using \"${hc%% *}\" for http downloads"
+# install anything that's missing
+type -p ${!pkg[*]} >/dev/null 2>&1 || {
 	echo "Installing dependencies: ${pkg[*]}"
-	${priv_exec} apt install ${pkg[*]}
+	for x in "${package_managers[@]}" ;do
+		command -v ${x%% *} >/dev/null 2>&1 || continue
+		x="${su} $x ${pkg[*]}"
+		ask "Ok to \"$x\" (y/N)? " && $x && break
+	done
 	echo
 }
-type -p ${!pkg[*]} 2>&1 >/dev/null || abrt "Missing one or more: ${!pkg[*]}"
+type -p ${!pkg[*]} >/dev/null 2>&1 || abrt "Please install these packages: ${pkg[*]}"
 
 # fake detected drive for debugging
 # 611100WD 611110WD 613000WD -> 613200WD
@@ -93,7 +112,7 @@ echo
 x="https://${wd_firmware_host}${devices_xml_path}"
 all_xml="${devices_xml_path##*/}"
 $DEBUG && echo "debug: get $x"
-${http_client} "${all_xml}" "$x"
+${hc} "${all_xml}" "$x"
 [[ -s "${all_xml}" ]] || abrt "failed to download $x"
 $DEBUG && echo
 
@@ -123,7 +142,7 @@ echo
 device_xml_url="https://${wd_firmware_host}/${p[$v]}"
 one_xml="${device_xml_url##*/}"
 $DEBUG && echo "debug: get ${device_xml_url}"
-${http_client} "${one_xml}" "${device_xml_url}"
+${hc} "${one_xml}" "${device_xml_url}"
 [[ -s "${one_xml}" ]] || abrt "failed to download ${device_xml_url}"
 $DEBUG && echo
 
@@ -146,7 +165,7 @@ done < "${one_xml}"
 # download the firmware file
 fwu="${device_xml_url%/*}/${fwf}"
 $DEBUG && echo "debug: get ${fwu}"
-${http_client} "${fwf}" "${fwu}"
+${hc} "${fwf}" "${fwu}"
 [[ -s "${fwf}" ]] || abrt "failed to download ${fwu}"
 $DEBUG && echo
 
@@ -155,13 +174,13 @@ $DEBUG && echo
 
 # load the firmware onto the drive
 ask "Load ${fwf} onto ${dev} (y/N)? " || abrt "Aborted"
-${priv_exec} nvme fw-download -f "${fwf}" "${dev}" || abrt "failed"
+${su} nvme fw-download -f "${fwf}" "${dev}" || abrt "failed"
 echo
 
 # activate the new firmware
 ask "Activate the new firmware (y/N)? " || abrt "Aborted"
-${priv_exec} nvme fw-commit -s 2 -a 3 "${dev}" || abrt "failed"
-
+${su} nvme fw-commit -s 2 -a 3 "${dev}" || abrt "failed"
 echo
+
 echo "Firmware update process completed. Please reboot."
 echo
