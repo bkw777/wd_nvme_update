@@ -2,37 +2,22 @@
 [ -n "${BASH_VERSION}" ] || exec bash $0
 set +o posix
 
-# This script downloads and updates the firmware of Western Digital SSDs on Ubuntu / Linux Mint.
-# It is only capable of updating, if, and only if the current firmware version is
-# directly supported. If not, you have to upgrade to one of these versions first.
-
-# The script assumes the SSD is at /dev/nvme0. Adjust accordingly if your SSD is located elsewhere.
-# Firmware updates can be risky.
-# Always back up your data and understand the risks before proceeding.
-# Use at your own risk
-
-# Copyright (C) 2023 by Jules Kreuer - @not_a_feature
-# With adaptations from @Klaas-
-
-
-# This piece of software is published unter the GNU General Public License v3.0
-# TLDR:
+# Downloads and updates the firmware of Western Digital NVME SSDs
 #
-# | Permissions      | Conditions                   | Limitations |
-# | ---------------- | ---------------------------- | ----------- |
-# | ✓ Commercial use | Disclose source              | ✕ Liability |
-# | ✓ Distribution   | License and copyright notice | ✕ Warranty  |
-# | ✓ Modification   | Same license                 |             |
-# | ✓ Patent use     | State changes                |             |
-# | ✓ Private use    |                              |             |
+# Firmware updates are always risky. Use at your own risk
+#
+# 2023 Brian K. White
+# original: Copyright (C) 2023 by Jules Kreuer - @not_a_feature
+# With adaptations from @Klaas-
+# License: GPL3
 
 ########################################################################
 # configuration
 
-drive_class="nvme" # "nvme" for nvme0
-drive_num="0"      # "0" for nvme0
+device_class="nvme"
 
 wd_firmware_host="wddashboarddownloads.wdc.com"
+
 devices_xml_path="/wdDashboard/config/devices/lista_devices.xml"
 
 priv_exec="sudo" # "sudo", "pkexec", lxsudo, doas, etc
@@ -41,32 +26,38 @@ http_client="wget -qO" # "wget -qO" , "curl -so" , "aria2c -q -o"
 
 tmp_dir="${XDG_RUNTIME_DIR:-/tmp}"
 
+: ${DEBUG:=false}
+
 ########################################################################
 
-name="${drive_class}${drive_num}"
-sys="/sys/class/$drive_class/$name"
-dev="/dev/$name"
-ifs="$IFS"
-sn="${0//\//_}"
-
 echo "$0 - WD nvme drive firmware updater"
-echo
-echo "Updating firmware for $dev"
-echo
 
-mkdir -p $tmp_dir
-cd $tmp_dir || {
-	echo "Could not cd $tmp_dir !"
-	exit 1
+abrt () { echo -e "$@" >&2 ;exit 1 ; }
+ask () { local x=n ;read -p"$@" x ;[[ $x == "y" ]] ; }
+usage () { abrt "\n  usage  : $0 <device>\n  example: $0 /dev/nvme0\n\n${@}\n" ; }
+ifs="${IFS}"
+
+# drive device node, model number, and firmware version
+dev="$1"
+[[ -c "${dev}" ]] || usage "\"${dev}\" does not exist or is not a character device"
+name=${dev##*/}
+sys="/sys/class/${device_class}/${name}"
+[[ -d "${sys}" ]] || usage "${sys} does not exist"
+read drive_model < ${sys}/model || usage "Could not read ${sys}/model"
+read firmware_rev < ${sys}/firmware_rev || usage "Could not read ${sys}/firmware_rev"
+
+# work out of unique temp dir
+# delete temp dir on exit
+unset td ;typeset -r td="${tmp_dir}/${0//\//_}${$}/"
+rm -rf "${td}" ;mkdir -p "${td}" || abrt "Could not mkdir -p \"${td}\" !"
+cd "${td}" || abrt "Could not cd \"${td}\" !"
+${DEBUG} && {
+	trap 'echo "debug: temp files left in ${td}"' 0
+} || {
+	trap 'rm -rf "${td}"' 0
 }
 
-# give all temp files names like tf[foo]=/path/to/foo
-# delete ${tf[*]} on exit
-unset tf ;typeset -A tf=()
-trap 'rm -f "${tf[@]}"' 0
-
 # required external utils
-#echo "checking dependencies"
 x=${http_client%% *}
 typeset -A a=(
 	[curl]=curl
@@ -81,107 +72,97 @@ typeset -A pkg=(
 unset a
 type -p ${!pkg[*]} 2>&1 >/dev/null || {
 	echo "Installing dependencies: ${pkg[*]}"
-	$priv_exec apt install ${pkg[*]}
+	${priv_exec} apt install ${pkg[*]}
 	echo
 }
-type -p ${!pkg[*]} 2>&1 >/dev/null || exit 1
+type -p ${!pkg[*]} 2>&1 >/dev/null || abrt "Missing one or more: ${!pkg[*]}"
 
-# drive model number and firmware version
-read drive_model < $sys/model
-read firmware_rev < $sys/firmware_rev
-echo "Model: $drive_model"
-echo "Firmware: $firmware_rev"
+
+# fake detected drive for debugging
+# 611100WD 611110WD 613000WD -> 613200WD
+# 614300WD 614600WD 614900WD 615100WD 615300WD -> 615400WD
+#drive_model="WDS200T1X0E-00AFY0"
+#firmware_rev="614900WD"
+
+
+echo "Device:   ${dev}"
+echo "Model:    ${drive_model}"
+echo "Firmware: ${firmware_rev}"
 echo
 
-# device list and firmware URL
-tf[all]="${sn}_all.xml"
-rm -f "${tf[all]}"
-$http_client "${tf[all]}" "https://${wd_firmware_host}${devices_xml_path}"
+# download the catalog xml for all devices
+x="https://${wd_firmware_host}${devices_xml_path}"
+all_xml="${devices_xml_path##*/}"
+$DEBUG && echo "debug: get $x"
+${http_client} "${all_xml}" "$x"
+[[ -s "${all_xml}" ]] || abrt "failed to download $x"
+$DEBUG && echo
 
-# using xmlstarlet or xmllint or any real xml parser would be more robust
-#xmllint --xpath 'lista_devices/lista_device/url' $tmp_devices_xml
-# gives a proper list of url elements regardless of file formatting.
-
+# extract device_properties.xml urls
+# would be better: xmllint --xpath 'lista_devices/lista_device/url' file.xml
 m="${drive_model// /_}"
-typeset -A p=()
+unset p ;typeset -A p=()
 while read x ;do
 	[[ $x =~ ^[[:space:]]*\<url\>.*/device_properties\.xml\</url\>[[:space:]]*$ ]] || continue
-	[[ $x =~ /$m/ ]] || continue
-	x="${x#*>}"
-	x="${x%<*}"
-	IFS=/ w=($x) IFS="$ifs"
-	p+=([${w[3]}]="$x")
-done < "${tf[all]}"
-
-((${#p[@]})) || {
-    echo "No matching firmware URL found for model $drive_model."
-    exit 1
-}
-
-l=("" ${!p[@]})
-i=${#p[@]}
-v=${l[$i]}
-u=${p[$v]}
-[[ "$firmware_rev" == "$v" ]] && {
-	echo "Already on latest firmware."
-	exit 0
-}
-
-echo "Found the following firmware versions available for your drive:"
-echo ${!p[@]}
+	x="${x#*>}" ;x="${x%<*}"
+	IFS=/ a=($x) IFS="$ifs"
+	[[ "${a[2]}" == "$m" ]] || continue
+	[[ ${a[3]} > ${firmware_rev} ]] && p+=([${a[3]}]="$x") || echo "Available ${a[3]} is not newer."
+done < "${all_xml}"
 echo
-((i>1)) && {
-	x="$PS3" PS3="Select version to install: "
-	select v in ${!p[@]} ;do
-		u= ;[[ "$v" ]] && u="${p[$v]}" && [[ "$u" ]] && break
-	done
-	PS3="$x"
-}
 
-# download the device properties XML and parse it
-dxu="https://$wd_firmware_host/$u"
-tf[one]="${sn}_one.xml"
-rm -f "${tf[one]}"
-$http_client "${tf[one]}" "$dxu"
+# find the highest available version
+v= ;for x in "${!p[@]}" ;do [[ $x > $v ]] && v="$x" ;done
+[[ "$v" ]] || abrt "No updates available."
 
+echo "Update(s) available:"
+x="$PS3" PS3="Which version do you want to install (1-${#p[@]})? "
+select v in "${!p[@]}" ;do break ;done ;PS3="$x"
+[[ "$v" ]] && [[ "${p[$v]}" ]] || abrt "Aborted"
+echo
+
+# download the device properties xml
+device_xml_url="https://${wd_firmware_host}/${p[$v]}"
+one_xml="${device_xml_url##*/}"
+$DEBUG && echo "debug: get ${device_xml_url}"
+${http_client} "${one_xml}" "${device_xml_url}"
+[[ -s "${one_xml}" ]] || abrt "failed to download ${device_xml_url}"
+$DEBUG && echo
+
+# extract fwfile and dependency urls
 fwf= deps=()
 while read x ;do
 	[[ $x =~ ^[[:space:]]*\<fwfile\>.*\</fwfile\>[[:space:]]*$ ]] && { x="${x#*>}" ;fwf="${x%<*}" ;continue ; }
 	[[ $x =~ ^[[:space:]]*\<dependency.*\>.*\</dependency\>[[:space:]]*$ ]] && { x="${x#*>}" ;deps+=("${x%<*}") ; }
-done < "${tf[one]}"
+done < "${one_xml}"
 
-echo
-echo "Firmware File: ${fwf}"
-echo "Dependencies:"
-echo "${deps[@]}"
-echo
+# check if running firmware is new enough to install the ne firmware
+[[ "${deps[@]}" =~ ${firmware_rev} ]] || abrt "\
+Upgrading to $v requires the drive to be
+currently running one of the following:
+${deps[@]}
 
-# check if current firmware is new enough to install the new one
-[[ "${deps[@]}" =~ $firmware_rev ]] || {
-    echo "Please up/downgrade to one of the dependency versions above first."
-    exit 1
-}
+${dev} is currently running ${firmware_rev}
+"
 
 # download the firmware file
-fwu="${dxu%/*}/${fwf}"
-tf[fwf]="${sn}_${fwf}"
-echo "Downloading $fwu ..."
-rm -f "${tf[fwf]}"
-$http_client "${tf[fwf]}" "${fwu}" || { echo "failed download" ;exit 1 ; }
+fwu="${device_xml_url%/*}/${fwf}"
+$DEBUG && echo "debug: get ${fwu}"
+${http_client} "${fwf}" "${fwu}"
+[[ -s "${fwf}" ]] || abrt "failed to download ${fwu}"
+$DEBUG && echo
 
-# TODO verify download somehow
+# TODO verify uncorrupted download somehow
+# hopefully the firmware and updater itself includes a checksum of some sort
 
 # load the firmware onto the drive
-echo
-x=n ;read -p"Load $fwf onto $dev (y/N)? " x
-[[ $x == "y" ]] || { echo "Aborted" ;exit 1 ; }
-$priv_exec nvme fw-download -f "${tf[fwf]}" $dev || exit 1
+ask "Load ${fwf} onto ${dev} (y/N)? " || abrt "Aborted"
+${priv_exec} nvme fw-download -f "${fwf}" "${dev}" || abrt "failed"
 
 # activate the new firmware
 echo
-x=n ;read -p"Activate the new firmware (y/N)? " x
-[[ $x == "y" ]] || { echo "Aborted" ;exit 1 ; }
-$priv_exec nvme fw-commit -s 2 -a 3 $dev
+ask "Activate the new firmware (y/N)? " || abrt "Aborted"
+${priv_exec} nvme fw-commit -s 2 -a 3 "${dev}" || abrt "failed"
 
 echo
 echo "Firmware update process completed. Please reboot."
